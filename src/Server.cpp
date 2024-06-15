@@ -2,6 +2,8 @@
 #include <iostream>
 #include <fstream>
 
+#define HEADER_SIZE 100
+
 int main(int argc, char* argv[]) {
     // Flush after every std::cout / std::cerr
     std::cout << std::unitbuf;
@@ -22,16 +24,18 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         
-        // Skip the first 16 bytes of the header
+        // Skip the first 16 bytes of database header
         db_file.seekg(16);
-        
         char buffer[2];
         db_file.read(buffer, 2);
-        
-        // little-endian format
         unsigned short page_size = (static_cast<unsigned char>(buffer[1]) | (static_cast<unsigned char>(buffer[0]) << 8));
-        
         std::cout << "database page size: " << page_size << std::endl;
+
+        // Skip database header | offset 3 to reach cell count
+        db_file.seekg(HEADER_SIZE + 3);
+        db_file.read(buffer, 2);
+        unsigned short table_count = (static_cast<unsigned char>(buffer[1]) | (static_cast<unsigned char>(buffer[0]) << 8));
+        std::cout << "number of tables: " << table_count << std::endl;
 
         db_file.close();
     }
