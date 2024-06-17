@@ -3,7 +3,8 @@
 #include <fstream>
 #include <sstream>
 #include "utility.h"
-// #include <cstdint>
+#include "config.h"
+#include <cstdint>
 
 #define DATABASE_HEADER 100
 #define TABLE_LEAF_PAGE_HEADER 8
@@ -49,6 +50,49 @@ uint32_t read4ByteInt(std::istream& stream) {
             static_cast<unsigned char>(buffer[3]);
 }
 
+char* createTableNamesString(DataTable* table) {
+    if (table->num_rows == 0) return NULL;
+
+    // Start with an initial buffer size.
+    size_t buffer_size = 256;
+    char* names = (char*) malloc(buffer_size);
+    if (!names) return NULL;
+    
+    names[0] = '\0';  // Start with an empty string.
+    size_t current_length = 0;
+
+    for (int i = 0; i < table->num_rows; ++i) {
+        char* name = table->rows[i].columns[2].value.text;
+        size_t name_length = strlen(name);
+        
+        // Check if we need more space: current + new name + space + null terminator
+        if (current_length + name_length + 2 > buffer_size) {
+            // Increase buffer size to fit new name
+            while (current_length + name_length + 2 > buffer_size) {
+                buffer_size *= 2;  // Double the buffer size to reduce reallocations
+            }
+            char* new_buffer = (char*) realloc(names, buffer_size);
+            if (!new_buffer) {
+                free(names);
+                return NULL;
+            }
+            names = new_buffer;
+        }
+
+        // Concatenate the name and a space
+        strcat(names, name);
+        strcat(names, " ");
+        current_length += name_length + 1;  // Update length (+1 for the space)
+    }
+
+    // Remove the last space if any names were added
+    if (table->num_rows > 0) {
+        names[current_length - 1] = '\0';  // Replace last space with null terminator
+    }
+
+    return names;
+}
+
 int main(int argc, char* argv[]) {
     // Flush after every std::cout / std::cerr
     std::cout << std::unitbuf;
@@ -80,6 +124,8 @@ int main(int argc, char* argv[]) {
     db_file.read(buffer, 1);
     RESERVED_SIZE = static_cast<unsigned char>(buffer[0]);
 
+    Config::getInstance()->setTextEncoding(getTextEncoding(db_file));
+
     if (command == ".dbinfo") {
         std::cout << "database page size: " << PAGE_SIZE << std::endl;
 
@@ -101,7 +147,7 @@ int main(int argc, char* argv[]) {
         unsigned short cell_count = (static_cast<unsigned char>(buffer[1]) | (static_cast<unsigned char>(buffer[0]) << 8));
         
         int cnt = 0;
-        while (cnt++ < cell_count) {
+        while (cnt < cell_count) {
             db_file.seekg(DATABASE_HEADER + TABLE_LEAF_PAGE_HEADER + cnt*CELL_POINTER);
             // read cell content offset into buffer
             db_file.read(buffer, 2);
@@ -110,10 +156,8 @@ int main(int argc, char* argv[]) {
 
             // Number of bytes of payload varint ~ `P`
             varint nbytes_payload = readVarint(db_file);
-            std::cout << nbytes_payload << std::endl;
             // Rowid varint
             varint row_id = readVarint(db_file);
-            std::cout << row_id << std::endl;            
 
             /**
              * U = PAGE_SIZE - RESERVED_SIZE
@@ -129,7 +173,6 @@ int main(int argc, char* argv[]) {
             
             db_file.read(payload, nbytes_payload);
 
-            uint32_t overflow_page_no;
             if (nbytes_payload > U - 35) {
                 // Page number of first overflow page 4-byte integer present
                 uint32_t overflow_page_no = read4ByteInt(db_file);
@@ -170,7 +213,13 @@ int main(int argc, char* argv[]) {
             row[0] = type; row[1] = name; row[2] = tblName;
             row[3] = rootPage; row[4] = sql;
             addRow(&table, row, 5);
+            cnt++;
         }
+
+
+        // for(int rowIdx = 0; rowIdx < table.num_rows; ++rowIdx)
+        //     char* tblName = table.rows[rowIdx].columns[2].value.text;
+        std::cout << createTableNamesString(&table) << std::endl;
         freeDataTable(&table);
     }
 
