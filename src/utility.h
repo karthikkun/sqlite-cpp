@@ -1,10 +1,16 @@
 #ifndef UTILITY_H
 #define UTILITY_H
 
-#include <vector>
 #include <stdexcept>
 #include <string>
+#include <cstdint>
 #define varint int64_t
+
+typedef enum {
+    SQLITE_UTF8 = 1,     // UTF-8 text encoding
+    SQLITE_UTF16LE = 2,  // UTF-16 little-endian text encoding
+    SQLITE_UTF16BE = 3   // UTF-16 big-endian text encoding
+} SQLiteEncoding;
 
 // Enum representing data types handled by the processor
 enum class DataType {
@@ -25,6 +31,7 @@ union DataUnion {
     int32_t int32;
     int64_t int64;
     double float64;
+    char* text;
 
     DataUnion() {}  // Default constructor
 
@@ -66,5 +73,8 @@ void initDataTable(DataTable *table);
 void addRow(DataTable *table, Data *rowData, int numColumns);
 void freeDataTable(DataTable *table);
 
+SQLiteEncoding getTextEncoding(std::istream& stream);
+
+void readText(char* text, size_t nBytes, SQLiteEncoding textEncoding, std::istream& stream);
 
 #endif // UTILITY_H
