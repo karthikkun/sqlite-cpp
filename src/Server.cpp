@@ -5,6 +5,7 @@
 #include "utility.h"
 #include "config.h"
 #include <cstdint>
+#include <string>
 
 #define DATABASE_HEADER 100
 #define TABLE_LEAF_PAGE_HEADER 8
@@ -93,6 +94,172 @@ char* createTableNamesString(DataTable* table) {
     return names;
 }
 
+// read from `db_file` stream, db table's info from sqlite_schema into DataTable
+// see schema definiton of sqlite_schema for more information
+bool readSqliteSchema(DataTable *table, std::istream& db_file) {
+    // Skip database header | offset 3 to reach cell count
+    char buffer[2];
+    db_file.seekg(DATABASE_HEADER + 3);
+    db_file.read(buffer, 2);
+    unsigned short cell_count = (static_cast<unsigned char>(buffer[1]) | (static_cast<unsigned char>(buffer[0]) << 8));
+    
+    int cnt = 0;
+    while (cnt < cell_count) {
+        db_file.seekg(DATABASE_HEADER + TABLE_LEAF_PAGE_HEADER + cnt*CELL_POINTER);
+        // read cell content offset into buffer
+        db_file.read(buffer, 2);
+        unsigned short cell_content_offset = (static_cast<unsigned char>(buffer[1]) | (static_cast<unsigned char>(buffer[0]) << 8));
+        db_file.seekg(cell_content_offset);
+
+        // Number of bytes of payload varint ~ `P`
+        varint nbytes_payload = readVarint(db_file);
+        // Rowid varint
+        varint row_id = readVarint(db_file);
+
+        /**
+         * U = PAGE_SIZE - RESERVED_SIZE
+         * U - 35 essentially gives you the maximum amount of data (payload) that can be stored \
+         * in the body of the B-tree page without the data spilling 
+         */ 
+        unsigned short U = PAGE_SIZE - RESERVED_SIZE;
+        // Payload byte[]
+        char* payload = new char[nbytes_payload];  // Allocate payload buffer
+        // read inital payload
+        // TODO: Warning! din't handle when payload overflowed
+        if (nbytes_payload > U - 35)
+            throw std::runtime_error("Payload size exceeds the maximum allowed limit.");
+        
+        db_file.read(payload, nbytes_payload);
+
+        if (nbytes_payload > U - 35) {
+            // Page number of first overflow page 4-byte integer present
+            uint32_t overflow_page_no = read4ByteInt(db_file);
+            // TODO: read remaining payload from overflow pages
+            throw std::runtime_error("Payload size exceeds the maximum allowed limit.");
+            return false;
+        }
+
+        std::string str_payload(payload, nbytes_payload);
+        std::istringstream payload_stream(str_payload);
+
+        // Record
+        // record header size
+        varint nbytes_record_header = readVarint(payload_stream);
+        /**
+         * CREATE TABLE sqlite_schema(
+                type text,
+                name text,
+                tbl_name text,
+                rootpage integer,
+                sql text
+            );
+            */
+        // Serial Type Codes
+        varint sType = readVarint(payload_stream);
+        varint sName = readVarint(payload_stream);
+        varint sTblName = readVarint(payload_stream);
+        varint sRootpage = readVarint(payload_stream);
+        varint sSql = readVarint(payload_stream);
+
+        // Record body
+        Data type = processBySerialType(sType, payload_stream);
+        Data name = processBySerialType(sName, payload_stream);
+        Data tblName = processBySerialType(sTblName, payload_stream);
+        Data rootPage = processBySerialType(sRootpage, payload_stream);
+        Data sql = processBySerialType(sSql, payload_stream);
+        
+        Data* data = (Data*)malloc(5*sizeof(Data));
+        data[0] = type; data[1] = name; data[2] = tblName;
+        data[3] = rootPage; data[4] = sql;
+        addRow(table, data, 5);
+        cnt++;
+    }
+    return true;
+}
+
+// read from `stream` db table info with name `tableName` from sqlite_schema into DataRow
+bool readSqliteSchema(DataRow *row, const char* tableName, std::istream& db_file) {
+    // Skip database header | offset 3 to reach cell count
+    char buffer[2];
+    db_file.seekg(DATABASE_HEADER + 3);
+    db_file.read(buffer, 2);
+    unsigned short cell_count = (static_cast<unsigned char>(buffer[1]) | (static_cast<unsigned char>(buffer[0]) << 8));
+    
+    int cnt = 0;
+    while (cnt < cell_count) {
+        db_file.seekg(DATABASE_HEADER + TABLE_LEAF_PAGE_HEADER + cnt*CELL_POINTER);
+        // read cell content offset into buffer
+        db_file.read(buffer, 2);
+        unsigned short cell_content_offset = (static_cast<unsigned char>(buffer[1]) | (static_cast<unsigned char>(buffer[0]) << 8));
+        db_file.seekg(cell_content_offset);
+
+        // Number of bytes of payload varint ~ `P`
+        varint nbytes_payload = readVarint(db_file);
+        // Rowid varint
+        varint row_id = readVarint(db_file);
+
+        /**
+         * U = PAGE_SIZE - RESERVED_SIZE
+         * U - 35 essentially gives you the maximum amount of data (payload) that can be stored \
+         * in the body of the B-tree page without the data spilling 
+         */ 
+        unsigned short U = PAGE_SIZE - RESERVED_SIZE;
+        // Payload byte[]
+        char* payload = new char[nbytes_payload];  // Allocate payload buffer
+        // read inital payload
+        // TODO: Warning! din't handle when payload overflowed
+        if (nbytes_payload > U - 35) throw std::runtime_error("Payload size exceeds the maximum allowed limit.");
+        
+        db_file.read(payload, nbytes_payload);
+
+        if (nbytes_payload > U - 35) {
+            // Page number of first overflow page 4-byte integer present
+            uint32_t overflow_page_no = read4ByteInt(db_file);
+            // TODO: read remaining payload from overflow pages
+            throw std::runtime_error("Payload size exceeds the maximum allowed limit.");
+        }
+
+        std::string str_payload(payload, nbytes_payload);
+        std::istringstream payload_stream(str_payload);
+
+        // Record
+        // record header size
+        varint nbytes_record_header = readVarint(payload_stream);
+        /**
+         * CREATE TABLE sqlite_schema(
+                type text,
+                name text,
+                tbl_name text,
+                rootpage integer,
+                sql text
+            );
+            */
+        // Serial Type Codes
+        varint sType = readVarint(payload_stream);
+        varint sName = readVarint(payload_stream);
+        varint sTblName = readVarint(payload_stream);
+        varint sRootpage = readVarint(payload_stream);
+        varint sSql = readVarint(payload_stream);
+
+        // Record body
+        Data type = processBySerialType(sType, payload_stream);
+        Data name = processBySerialType(sName, payload_stream);
+        Data tblName = processBySerialType(sTblName, payload_stream);
+        Data rootPage = processBySerialType(sRootpage, payload_stream);
+        Data sql = processBySerialType(sSql, payload_stream);
+        
+        if(strcmp(tblName.value.text, tableName) != 0) {cnt++; continue;}
+
+        Data* data = (Data*)malloc(5*sizeof(Data));
+        data[0] = type; data[1] = name; data[2] = tblName;
+        data[3] = rootPage; data[4] = sql;
+        row->columns = data;
+        row->num_columns = 5;
+        return true;
+    }
+    return false;
+}
+
 int main(int argc, char* argv[]) {
     // Flush after every std::cout / std::cerr
     std::cout << std::unitbuf;
@@ -139,90 +306,33 @@ int main(int argc, char* argv[]) {
     else if(command == ".tables") {
         DataTable table;
         initDataTable(&table);
-
-        // Skip database header | offset 3 to reach cell count
-        char buffer[2];
-        db_file.seekg(DATABASE_HEADER + 3);
-        db_file.read(buffer, 2);
-        unsigned short cell_count = (static_cast<unsigned char>(buffer[1]) | (static_cast<unsigned char>(buffer[0]) << 8));
-        
-        int cnt = 0;
-        while (cnt < cell_count) {
-            db_file.seekg(DATABASE_HEADER + TABLE_LEAF_PAGE_HEADER + cnt*CELL_POINTER);
-            // read cell content offset into buffer
-            db_file.read(buffer, 2);
-            unsigned short cell_content_offset = (static_cast<unsigned char>(buffer[1]) | (static_cast<unsigned char>(buffer[0]) << 8));
-            db_file.seekg(cell_content_offset);
-
-            // Number of bytes of payload varint ~ `P`
-            varint nbytes_payload = readVarint(db_file);
-            // Rowid varint
-            varint row_id = readVarint(db_file);
-
-            /**
-             * U = PAGE_SIZE - RESERVED_SIZE
-             * U - 35 essentially gives you the maximum amount of data (payload) that can be stored \
-             * in the body of the B-tree page without the data spilling 
-             */ 
-            unsigned short U = PAGE_SIZE - RESERVED_SIZE;
-            // Payload byte[]
-            char* payload = new char[nbytes_payload];  // Allocate payload buffer
-            // read inital payload
-            // TODO: Warning! din't handle when payload overflowed
-            if (nbytes_payload > U - 35) throw std::runtime_error("Payload size exceeds the maximum allowed limit.");
-            
-            db_file.read(payload, nbytes_payload);
-
-            if (nbytes_payload > U - 35) {
-                // Page number of first overflow page 4-byte integer present
-                uint32_t overflow_page_no = read4ByteInt(db_file);
-                // TODO: read remaining payload from overflow pages
-                throw std::runtime_error("Payload size exceeds the maximum allowed limit.");
-            }
-
-            std::string str_payload(payload, nbytes_payload);
-            std::istringstream payload_stream(str_payload);
-
-            // Record
-            // record header size
-            varint nbytes_record_header = readVarint(payload_stream);
-            /**
-             * CREATE TABLE sqlite_schema(
-                    type text,
-                    name text,
-                    tbl_name text,
-                    rootpage integer,
-                    sql text
-                );
-             */
-            // Serial Type Codes
-            varint sType = readVarint(payload_stream);
-            varint sName = readVarint(payload_stream);
-            varint sTblName = readVarint(payload_stream);
-            varint sRootpage = readVarint(payload_stream);
-            varint sSql = readVarint(payload_stream);
-
-            // Record body
-            Data type = processBySerialType(sType, payload_stream);
-            Data name = processBySerialType(sName, payload_stream);
-            Data tblName = processBySerialType(sTblName, payload_stream);
-            Data rootPage = processBySerialType(sRootpage, payload_stream);
-            Data sql = processBySerialType(sSql, payload_stream);
-            
-            Data* row = (Data*)malloc(5*sizeof(Data));
-            row[0] = type; row[1] = name; row[2] = tblName;
-            row[3] = rootPage; row[4] = sql;
-            addRow(&table, row, 5);
-            cnt++;
-        }
-
-
-        // for(int rowIdx = 0; rowIdx < table.num_rows; ++rowIdx)
-        //     char* tblName = table.rows[rowIdx].columns[2].value.text;
+        readSqliteSchema(&table, db_file);
         std::cout << createTableNamesString(&table) << std::endl;
         freeDataTable(&table);
     }
-
+    // sql command
+    else {
+        // parse SELECT COUNT(*) FROM apples
+        DynamicArray* tokens = new DynamicArray();    
+        splitString(command, ' ', *tokens);
+        std::string tableName = tokens->getData()[tokens->getSize()-1];
+        
+        // read table row from sqlite_schema
+        DataRow* row = (DataRow*)malloc(sizeof(DataRow));
+        readSqliteSchema(row, tableName.c_str(), db_file);
+        
+        // access rootPage
+        int8_t* rootPage = static_cast<int8_t*>(getDataValue(row->columns[3]));
+        char buffer[2];
+        db_file.seekg((int(*rootPage)-1)*PAGE_SIZE);
+        db_file.seekg(3, std::ios::cur);
+        db_file.read(buffer, 2);
+        unsigned short row_count = (static_cast<unsigned char>(buffer[1]) | (static_cast<unsigned char>(buffer[0]) << 8));
+        std::cout << row_count << std::endl;
+        
+        free(row->columns);
+        free(row);
+    }
     db_file.close();
     return 0;
 }
