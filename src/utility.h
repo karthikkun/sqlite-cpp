@@ -58,6 +58,9 @@ typedef struct {
     int num_rows;
 } DataTable;
 
+// Function that acts like a method to retrieve the value
+void* getDataValue(Data &data);
+
 // Function to resolve the data type from a serial type code
 DataType resolveSerialType(varint serialType);
 
@@ -76,5 +79,24 @@ void freeDataTable(DataTable *table);
 SQLiteEncoding getTextEncoding(std::istream& stream);
 
 void readText(char* text, size_t nBytes, SQLiteEncoding textEncoding, std::istream& stream);
+
+class DynamicArray {
+public:
+    DynamicArray(size_t initialSize = 10);
+    ~DynamicArray();
+    void add(const std::string& token);
+    std::string* getData() const;
+    size_t getSize() const;
+    bool contains(const std::string& token) const;
+
+private:
+    void resize();
+    size_t size;
+    size_t capacity;
+    std::string* data;
+};
+
+void splitString(const std::string& str, char delimiter, DynamicArray& tokens);
+
 
 #endif // UTILITY_H

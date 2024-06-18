@@ -1,7 +1,28 @@
 #include "utility.h"
 #include <iostream>
+#include <sstream>
 #include <typeinfo>
 #include "config.h"
+
+void* getDataValue(Data &data) {
+    switch (data.type) {
+        case DataType::TypeInt8:
+            return &(data.value.int8);
+        case DataType::TypeInt16:
+            return &(data.value.int16);
+        case DataType::TypeInt32:
+            return &(data.value.int32);
+        case DataType::TypeInt64:
+            return &(data.value.int64);
+        case DataType::TypeFloat64:
+            return &(data.value.float64);
+        case DataType::TypeText:
+            return data.value.text;
+        case DataType::TypeNull:
+        default:
+            return NULL;
+    }
+}
 
 DataType resolveSerialType(varint serialType) {
     switch (serialType) {
@@ -161,5 +182,55 @@ void readText(char* text, size_t nBytes, SQLiteEncoding textEncoding, std::istre
         }
         default:
             throw std::runtime_error("Invalid Text Encoding!! Unable to proceed");
+    }
+}
+
+DynamicArray::DynamicArray(size_t initialSize)
+    : size(0), capacity(initialSize), data(new std::string[initialSize]) {}
+
+DynamicArray::~DynamicArray() {
+    delete[] data;
+}
+
+void DynamicArray::add(const std::string& token) {
+    if (size >= capacity) {
+        resize();
+    }
+    data[size++] = token;
+}
+
+std::string* DynamicArray::getData() const {
+    return data;
+}
+
+size_t DynamicArray::getSize() const {
+    return size;
+}
+
+void DynamicArray::resize() {
+    capacity *= 2;
+    std::string* newData = new std::string[capacity];
+    for (size_t i = 0; i < size; ++i) {
+        newData[i] = std::move(data[i]);
+    }
+    delete[] data;
+    data = newData;
+}
+
+bool DynamicArray::contains(const std::string& token) const {
+    for (size_t i = 0; i < size; ++i) {
+        if (data[i] == token) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void splitString(const std::string& str, char delimiter, DynamicArray& tokens) {
+    std::string token;
+    std::stringstream ss(str);
+    
+    while (std::getline(ss, token, delimiter)) {
+        tokens.add(token);
     }
 }
